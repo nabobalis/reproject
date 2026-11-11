@@ -66,8 +66,11 @@ def _arrays_may_share_storage(array_in, array_out):
     for array in (array_in, array_out):
         while isinstance(array, np.ndarray) and not isinstance(array, np.memmap):
             array = array.base
-        if not isinstance(array, np.memmap | mmap.mmap):
+        if array is None:
+            # The array owns its memory, which np.may_share_memory has checked.
             return False
+        # Other buffers (e.g. a memoryview) could be backed by a separate
+        # mapping of any file, so they are treated like unnamed mappings.
         filenames.append(getattr(array, "filename", None))
 
     if None in filenames:

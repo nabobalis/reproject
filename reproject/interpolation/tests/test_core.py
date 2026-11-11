@@ -2,6 +2,7 @@
 
 import itertools
 import logging
+import mmap
 
 import dask
 import dask.array as da
@@ -940,7 +941,7 @@ def test_parallel_threads_store_directly(
 
 
 @pytest.mark.parametrize("output_name", ["output_array", "output_footprint"])
-@pytest.mark.parametrize("input_type", ["numpy", "memmap", "dask"])
+@pytest.mark.parametrize("input_type", ["numpy", "memmap", "buffer", "dask"])
 def test_parallel_overlapping_output(tmp_path, output_name, input_type):
     data = np.random.default_rng(0).random((64, 64))
     wcs_in = WCS(naxis=2)
@@ -957,6 +958,15 @@ def test_parallel_overlapping_output(tmp_path, output_name, input_type):
         # Separate mappings share file storage even though NumPy sees disjoint memory.
         output = np.memmap(path, dtype=float, mode="r+", shape=data.shape).view(np.ndarray)
         array_in = array_in.view(np.ndarray)
+    elif input_type == "buffer":
+        path = tmp_path / "input.npy"
+        data.tofile(path)
+        output = np.memmap(path, dtype=float, mode="r+", shape=data.shape).view(np.ndarray)
+        # An array exposing a separate mapping of the same file through a
+        # memoryview, so neither NumPy nor the memmap filename sees the sharing.
+        file = open(path, "r+b")  # noqa: SIM115
+        mapping = mmap.mmap(file.fileno(), 0)
+        array_in = np.asarray(memoryview(mapping)).view(float).reshape(data.shape)
     else:
         output = data.view()
         array_in = (
@@ -976,6 +986,11 @@ def test_parallel_overlapping_output(tmp_path, output_name, input_type):
 
     assert result[0 if output_name == "output_array" else 1] is output
     assert_allclose(result, reference, equal_nan=True)
+
+    if input_type == "buffer":
+        array_in = None
+        mapping.close()
+        file.close()
 
 
 @pytest.mark.parametrize("dask_method", ["memmap", "none"])
